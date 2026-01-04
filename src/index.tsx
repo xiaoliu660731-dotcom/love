@@ -705,7 +705,6 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
   };
 
   // 获取有日记的日期列表
-  const daysWithEntries = new Set(entries.map(entry => entry.createdAt.split(' ')[0]));
 
   // 获取日历数据
   const getDaysInMonth = (date: Date) => {
@@ -1957,7 +1956,7 @@ function MoodView({ secretCode, identity }: { secretCode: string, identity: stri
   };
 
   const today = new Date().toISOString().split('T')[0];
-  const todayMoods = moods.filter(m => m.recordDate === today);
+  
 
   return (
     <div className="p-4 h-full flex flex-col">
@@ -2058,7 +2057,7 @@ function MoodView({ secretCode, identity }: { secretCode: string, identity: stri
 
 function GalleryView({ secretCode, identity }: { secretCode: string, identity: string }) {
   const [photos, setPhotos] = useState<PhotoEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  
 
   const fetchPhotos = useCallback(() => {
     // @ts-ignore
