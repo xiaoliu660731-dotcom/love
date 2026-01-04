@@ -2188,3 +2188,17 @@ const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement)
 root.render(
   <App />
 );
+
+// Register service worker for PWA installation support
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').then(
+      registration => {
+        console.log('ServiceWorker registration successful:', registration);
+      },
+      err => {
+        console.warn('ServiceWorker registration failed:', err);
+      }
+    );
+  });
+}
