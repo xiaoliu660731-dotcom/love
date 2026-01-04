@@ -1955,7 +1955,7 @@ function MoodView({ secretCode, identity }: { secretCode: string, identity: stri
     return data;
   };
 
-  const today = new Date().toISOString().split('T')[0];
+ 
   
 
   return (
