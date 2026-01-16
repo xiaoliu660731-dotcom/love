@@ -1741,27 +1741,7 @@ function PlanView({ secretCode, identity }: { secretCode: string, identity: stri
             </div>
           </div>
 
-          <h3 className="text-lg font-bold text-gray-800 mb-3">本周完成趋势</h3>
-          {weekData.some(d => d.total > 0) ? (
-            <div className="bg-white rounded-xl p-4 mb-4">
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={weekData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis yAxisId="left" label={{ value: '完成数', angle: -90, position: 'insideLeft' }} />
-                  <YAxis yAxisId="right" orientation="right" label={{ value: '完成率(%)', angle: 90, position: 'insideRight' }} />
-                  <Tooltip />
-                  <Legend />
-                  <Line yAxisId="left" type="monotone" dataKey="completed" stroke="#3b82f6" name="已完成" />
-                  <Line yAxisId="right" type="monotone" dataKey="rate" stroke="#10b981" name="完成率" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div className="text-center py-8 text-gray-400">本周暂无任务</div>
-          )}
-
-          <h3 className="text-lg font-bold text-gray-800 mb-3 mt-4">本周每日统计</h3>
+          <h3 className="text-lg font-bold text-gray-800 mb-3">本周每日统计</h3>
           <div className="space-y-2 pb-4">
             {weekData.map((day, idx) => (
               <div key={idx} className="bg-white rounded-lg p-3 flex items-center justify-between">
@@ -2009,8 +1989,7 @@ function AccountingView({ secretCode, identity }: { secretCode: string, identity
               </div>
             )}
           </div>
-
-          {/* 记账列表 */}
+        {/* 记账列表 */}
           <div className="flex-1 overflow-y-auto pb-20">
             {entries.length === 0 ? (
               <div className="text-center py-8 text-gray-400 text-sm">
