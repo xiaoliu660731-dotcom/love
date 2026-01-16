@@ -7,7 +7,7 @@ import {
   CheckCircle, Plus, Trash2, 
   Settings, Lock, Loader2, DollarSign, CheckSquare
 } from 'lucide-react';
-import { PieChart, Pie, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, Cell } from 'recharts';
+import { PieChart, Pie, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import './index.css';
 
 // =================================================================
@@ -253,7 +253,7 @@ function Onboarding({ onLogin }: { onLogin: (code: string, id: 'boy' | 'girl') =
 function HomeView({ secretCode, identity }: { secretCode: string, identity: string }) {
   const timeoutsRef = React.useRef<NodeJS.Timeout[]>([]);
   const startDate = new Date('2025-07-04'); 
-  const diffDays = useMemo(() => Math.ceil(Math.abs(new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), []);
+  const diffDays = useMemo(() => Math.ceil(Math.abs(new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate]);
   
   const [moods, setMoods] = useState<MoodEntry[]>([]);
   const [selectedMood, setSelectedMood] = useState<'happy' | 'good' | 'normal' | 'sad' | 'angry'>('good');
@@ -976,18 +976,18 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
     });
   }
 
-  // 获取选中日期的日记
-  const selectedDayEntries = entries.filter(entry => {
-    const entryDate = entry.createdAt.split(' ')[0]; // Bmob 格式: "2026-01-04 20:52:07"
-    console.log("比较日期:", { entryDate, selectedDate, match: entryDate === selectedDate });
-    return entryDate === selectedDate;
-  });
+  // 获取选中日期的日记 (暂时未使用)
+  // const selectedDayEntries = entries.filter(entry => {
+  //   const entryDate = entry.createdAt.split(' ')[0]; // Bmob 格式: "2026-01-04 20:52:07"
+  //   console.log("比较日期:", { entryDate, selectedDate, match: entryDate === selectedDate });
+  //   return entryDate === selectedDate;
+  // });
 
-  // 获取选中日期的照片
-  const selectedDayPhotos = photos.filter(photo => {
-    const photoDate = photo.uploadDate || photo.createdAt.split(' ')[0];
-    return photoDate === selectedDate;
-  });
+  // 获取选中日期的照片 (暂时未使用)
+  // const selectedDayPhotos = photos.filter(photo => {
+  //   const photoDate = photo.uploadDate || photo.createdAt.split(' ')[0];
+  //   return photoDate === selectedDate;
+  // });
 
   // 根据日期获取日记作者信息
   const getEntriesByDate = (dateStr: string) => {
