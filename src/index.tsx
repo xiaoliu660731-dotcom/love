@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 // 1. 引入 Bmob SDK (确保你已运行 npm install hydrogen-js-sdk)
 import Bmob from "hydrogen-js-sdk";
@@ -64,8 +64,10 @@ interface MoodEntry {
   note: string;
   author: 'boy' | 'girl';
   recordDate: string; // YYYY-MM-DD 格式
+  recordTime?: string; // HH:mm:ss 格式
   createdAt: string;
   secretCode: string;
+  photoBase64?: string; // 可选的照片Base64数据
 }
 
 interface PhotoEntry {
@@ -83,11 +85,28 @@ interface PhotoEntry {
 // 主应用组件
 // ------------------------------------------------------------------
 
+// 全局数据缓存
+const dataCache: Record<string, { data: any; timestamp: number }> = {};
+const CACHE_TTL = 30000; // 30秒缓存有效期
+
+function getFromCache(key: string) {
+  const cached = dataCache[key];
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setInCache(key: string, data: any) {
+  dataCache[key] = { data, timestamp: Date.now() };
+}
+
 function App() {
   const [secretCode, setSecretCode] = useState<string>('');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [identity, setIdentity] = useState<'boy' | 'girl'>('boy');
-  const [currentView, setCurrentView] = useState<'home' | 'diary' | 'plan' | 'accounting' | 'mood' | 'gallery'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'diary' | 'plan' | 'accounting' | 'gallery'>('home');
+  const [isLoadingView, setIsLoadingView] = useState(false);
 
   // 检查本地存储
   useEffect(() => {
@@ -161,23 +180,29 @@ function App() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-20 scrollbar-hide">
-        {currentView === 'home' && <HomeView key="home" />}
+      <div className="flex-1 overflow-y-auto pb-20 scrollbar-hide relative">
+        {isLoadingView && (
+          <div className="absolute inset-0 bg-white/50 z-50 flex items-center justify-center">
+            <div className="text-center">
+              <Loader2 className="animate-spin mx-auto mb-2 text-pink-500" size={24} />
+              <p className="text-xs text-gray-500">加载中...</p>
+            </div>
+          </div>
+        )}
+        {currentView === 'home' && <HomeView key="home" secretCode={secretCode} identity={identity} />}
         {currentView === 'diary' && <DiaryView key="diary" secretCode={secretCode} identity={identity} />}
         {currentView === 'plan' && <PlanView key="plan" secretCode={secretCode} identity={identity} />}
         {currentView === 'accounting' && <AccountingView key="accounting" secretCode={secretCode} identity={identity} />}
-        {currentView === 'mood' && <MoodView key="mood" secretCode={secretCode} identity={identity} />}
         {currentView === 'gallery' && <GalleryView key="gallery" secretCode={secretCode} identity={identity} />}
       </div>
 
       <div className="absolute bottom-0 w-full bg-white border-t border-gray-100 z-20">
         <div className="flex justify-around py-1 pb-4 px-1 overflow-x-auto scrollbar-hide">
-          <NavBtn icon={Heart} label="首页" active={currentView === 'home'} onClick={() => setCurrentView('home')} />
-          <NavBtn icon={BookOpen} label="日记" active={currentView === 'diary'} onClick={() => setCurrentView('diary')} />
-          <NavBtn icon={CheckSquare} label="计划" active={currentView === 'plan'} onClick={() => setCurrentView('plan')} />
-          <NavBtn icon={DollarSign} label="记账" active={currentView === 'accounting'} onClick={() => setCurrentView('accounting')} />
-          <NavBtn icon={Smile} label="心情" active={currentView === 'mood'} onClick={() => setCurrentView('mood')} />
-          <NavBtn icon={BookOpen} label="相册" active={currentView === 'gallery'} onClick={() => setCurrentView('gallery')} />
+          <NavBtn icon={Heart} label="首页" active={currentView === 'home'} onClick={() => { setIsLoadingView(true); setTimeout(() => { setCurrentView('home'); setIsLoadingView(false); }, 150); }} />
+          <NavBtn icon={BookOpen} label="日记" active={currentView === 'diary'} onClick={() => { setIsLoadingView(true); setTimeout(() => { setCurrentView('diary'); setIsLoadingView(false); }, 150); }} />
+          <NavBtn icon={CheckSquare} label="计划" active={currentView === 'plan'} onClick={() => { setIsLoadingView(true); setTimeout(() => { setCurrentView('plan'); setIsLoadingView(false); }, 150); }} />
+          <NavBtn icon={DollarSign} label="记账" active={currentView === 'accounting'} onClick={() => { setIsLoadingView(true); setTimeout(() => { setCurrentView('accounting'); setIsLoadingView(false); }, 150); }} />
+          <NavBtn icon={BookOpen} label="相册" active={currentView === 'gallery'} onClick={() => { setIsLoadingView(true); setTimeout(() => { setCurrentView('gallery'); setIsLoadingView(false); }, 150); }} />
         </div>
       </div>
     </div>
@@ -225,286 +250,35 @@ function Onboarding({ onLogin }: { onLogin: (code: string, id: 'boy' | 'girl') =
   );
 }
 
-function HomeView() {
+function HomeView({ secretCode, identity }: { secretCode: string, identity: string }) {
+  const timeoutsRef = React.useRef<NodeJS.Timeout[]>([]);
   const startDate = new Date('2025-07-04'); 
-  const diffDays = Math.ceil(Math.abs(new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-  const [entries, setEntries] = useState<DiaryEntry[]>([]);
-  const [tasks, setTasks] = useState<PlanTask[]>([]);
-  const [accountingEntries, setAccountingEntries] = useState<AccountingEntry[]>([]);
-  const [moods, setMoodEntries] = useState<MoodEntry[]>([]);
-
-  useEffect(() => {
-    let isMounted = true;
-    // 获取所有数据用于首页展示（不需要 secretCode，因为这是登录后的首页）
-    try {
-      // @ts-ignore
-      const diaryQuery = Bmob.Query("Diary");
-      if (diaryQuery) {
-        diaryQuery.order("-createdAt");
-        diaryQuery.find().then((res: any) => {
-          if (isMounted && Array.isArray(res) && res.length > 0) {
-            setEntries(res.slice(0, 3) as DiaryEntry[]);
-          }
-        }).catch((err: any) => {
-          console.log("日记加载失败:", err);
-        });
-      }
-
-      // @ts-ignore
-      const planQuery = Bmob.Query("PlanTask");
-      if (planQuery) {
-        planQuery.order("-createdAt");
-        planQuery.find().then((res: any) => {
-          if (isMounted && Array.isArray(res) && res.length > 0) {
-            setTasks(res.slice(0, 5) as PlanTask[]);
-          }
-        }).catch((err: any) => {
-          console.log("任务加载失败:", err);
-        });
-      }
-
-      // @ts-ignore
-      const accountingQuery = Bmob.Query("Accounting");
-      if (accountingQuery) {
-        accountingQuery.find().then((res: any) => {
-          if (isMounted && Array.isArray(res) && res.length > 0) {
-            setAccountingEntries(res.slice(0, 5) as AccountingEntry[]);
-          }
-        }).catch((err: any) => {
-          console.log("记账加载失败:", err);
-        });
-      }
-
-      // @ts-ignore
-      const moodQuery = Bmob.Query("MoodEntry");
-      if (moodQuery) {
-        moodQuery.order("-createdAt");
-        moodQuery.find().then((res: any) => {
-          if (isMounted && Array.isArray(res) && res.length > 0) {
-            setMoodEntries(res.slice(0, 2) as MoodEntry[]);
-          }
-        }).catch((err: any) => {
-          console.log("心情加载失败:", err);
-        });
-      }
-    } catch (err) {
-      console.error("HomeView 数据加载错误:", err);
-    }
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  // 计算统计数据
-  const todayTasks = tasks.filter(t => t.targetDate === new Date().toISOString().split('T')[0]);
-  const todayCompletedTasks = todayTasks.filter(t => t.completed === "true" || t.completed === true);
-  const thisMonthExpense = accountingEntries.filter(e => {
-    const entryDate = e.createdAt.split(' ')[0];
-    const thisMonth = new Date().toISOString().slice(0, 7);
-    return entryDate.slice(0, 7) === thisMonth;
-  }).reduce((sum, e) => sum + parseFloat(String(e.amount)), 0);
-
-  const moodEmojis: Record<string, string> = {
-    happy: '😄', good: '😊', normal: '😐', sad: '😔', angry: '😠'
-  };
-
-  const recentMood = moods.length > 0 ? moods[0] : null;
-
-  return (
-    <div className="p-4 space-y-4 pb-4">
-      {/* 纪念日卡片 */}
-      <div className="bg-gradient-to-r from-pink-400 via-pink-500 to-red-400 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden transition-all hover:shadow-2xl">
-        <div className="absolute -right-8 -bottom-8 w-32 h-32 bg-white opacity-10 rounded-full"></div>
-        <div className="absolute -left-8 top-4 w-24 h-24 bg-white opacity-10 rounded-full"></div>
-        <div className="relative z-10">
-          <p className="text-pink-100 text-sm mb-1 font-medium">💕 我们已经相爱了</p>
-          <h2 className="text-6xl font-black mb-2">{diffDays}</h2>
-          <p className="text-pink-100 text-xs">天 • Since 2025.07.04</p>
-        </div>
-      </div>
-
-      {/* 快捷操作卡片 */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-3 border border-blue-200 hover:shadow-md transition-shadow">
-          <p className="text-2xl mb-1">📝</p>
-          <p className="text-xs font-bold text-blue-900">{entries.length}</p>
-          <p className="text-xs text-blue-700">篇日记</p>
-        </div>
-        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-2xl p-3 border border-green-200 hover:shadow-md transition-shadow">
-          <p className="text-2xl mb-1">✅</p>
-          <p className="text-xs font-bold text-green-900">{todayCompletedTasks.length}/{todayTasks.length}</p>
-          <p className="text-xs text-green-700">今天任务</p>
-        </div>
-        <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl p-3 border border-purple-200 hover:shadow-md transition-shadow">
-          <p className="text-2xl mb-1">💰</p>
-          <p className="text-xs font-bold text-purple-900">¥{thisMonthExpense.toFixed(0)}</p>
-          <p className="text-xs text-purple-700">本月消费</p>
-        </div>
-      </div>
-
-      {/* 最新心情 */}
-      {recentMood && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
-          <div className="flex items-center gap-3">
-            <div className="text-4xl">{moodEmojis[recentMood.mood] || '😊'}</div>
-            <div className="flex-1">
-              <p className="text-sm font-bold text-gray-800">{recentMood.author === 'boy' ? '👦 他' : '👧 她'}的心情</p>
-              <p className="text-xs text-gray-500">{recentMood.recordDate}</p>
-              {recentMood.note && <p className="text-xs text-gray-600 mt-1 line-clamp-2">{recentMood.note}</p>}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 最近日记 */}
-      {entries.length > 0 && (
-        <div>
-          <h3 className="font-bold text-gray-800 mb-2 text-sm flex items-center gap-2">
-            <BookOpen size={16} className="text-pink-500" />
-            最近的日记
-          </h3>
-          <div className="space-y-2">
-            {entries.slice(0, 2).map(entry => (
-              <div key={entry.objectId} className={`p-3 rounded-xl border transition-all ${entry.author === 'boy' ? 'bg-blue-50 border-blue-200' : 'bg-pink-50 border-pink-200'}`}>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="text-xs font-semibold text-gray-600">{entry.author === 'boy' ? '👦' : '👧'} {entry.createdAt.split(' ')[0]}</p>
-                    <p className="text-sm text-gray-800 mt-1 line-clamp-2">{entry.text}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 待办任务 */}
-      {todayTasks.length > 0 && (
-        <div>
-          <h3 className="font-bold text-gray-800 mb-2 text-sm flex items-center gap-2">
-            <CheckSquare size={16} className="text-green-500" />
-            今天的计划 ({todayCompletedTasks.length}/{todayTasks.length})
-          </h3>
-          <div className="space-y-1">
-            {todayTasks.slice(0, 3).map(task => {
-              const isCompleted = task.completed === "true" || task.completed === true;
-              return (
-                <div key={task.objectId} className={`flex items-center gap-2 p-2 rounded-lg text-xs ${isCompleted ? 'bg-gray-100 text-gray-400' : 'bg-white border border-gray-100'}`}>
-                  <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${isCompleted ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}></div>
-                  <span className={isCompleted ? 'line-through' : ''}>{task.description}</span>
-                  <span className="ml-auto flex-shrink-0 text-[10px] bg-gray-100 px-1.5 py-0.5 rounded text-gray-500">
-                    {task.author === 'boy' ? '👦' : '👧'}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* 本月消费摘要 */}
-      {accountingEntries.length > 0 && (
-        <div>
-          <h3 className="font-bold text-gray-800 mb-2 text-sm flex items-center gap-2">
-            <DollarSign size={16} className="text-yellow-500" />
-            本月消费摘要
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-3 border border-blue-200">
-              <p className="text-xs text-blue-600">👦 他花了</p>
-              <p className="text-lg font-bold text-blue-700">¥{accountingEntries.filter(e => e.author === 'boy' && e.createdAt.split(' ')[0].slice(0, 7) === new Date().toISOString().slice(0, 7)).reduce((sum, e) => sum + parseFloat(String(e.amount)), 0).toFixed(2)}</p>
-            </div>
-            <div className="bg-gradient-to-br from-pink-50 to-pink-100 rounded-xl p-3 border border-pink-200">
-              <p className="text-xs text-pink-600">👧 她花了</p>
-              <p className="text-lg font-bold text-pink-700">¥{accountingEntries.filter(e => e.author === 'girl' && e.createdAt.split(' ')[0].slice(0, 7) === new Date().toISOString().slice(0, 7)).reduce((sum, e) => sum + parseFloat(String(e.amount)), 0).toFixed(2)}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 温馨提示 */}
-      <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl p-4 border border-amber-200">
-        <p className="text-xs text-amber-900 font-semibold mb-1">💡 温馨提示</p>
-        <p className="text-xs text-amber-800 leading-relaxed">
-          {todayTasks.length === 0 
-            ? "今天还没有计划呢，去计划一下吧！"
-            : todayCompletedTasks.length === todayTasks.length
-            ? "太棒了！今天的计划都完成了 🎉"
-            : `还有 ${todayTasks.length - todayCompletedTasks.length} 个计划待完成，加油！💪`
-          }
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function DiaryView({ secretCode, identity }: { secretCode: string, identity: string }) {
-  const [entries, setEntries] = useState<DiaryEntry[]>([]);
-  const [newText, setNewText] = useState('');
-  const [isWriting, setIsWriting] = useState(false);
+  const diffDays = useMemo(() => Math.ceil(Math.abs(new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), []);
+  
+  const [moods, setMoods] = useState<MoodEntry[]>([]);
+  const [selectedMood, setSelectedMood] = useState<'happy' | 'good' | 'normal' | 'sad' | 'angry'>('good');
+  const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
-  const [expandedDate, setExpandedDate] = useState<string | null>(null); // 用于全屏展示
-  const [refresh, setRefresh] = useState(0); // 用于触发重新加载
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [photos, setPhotos] = useState<PhotoEntry[]>([]);
-  const [photoCaption, setPhotoCaption] = useState('');
+  
+  // 图片上传相关状态
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  
+  // 弹窗状态
+  const [showMoodsModal, setShowMoodsModal] = useState(false);
+  
+  // 照片墙状态
+  const [galleryPhotos, setGalleryPhotos] = useState<PhotoEntry[]>([]);
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
 
-  useEffect(() => {
-    let isMounted = true;
-    
-    const fetchPhotosData = () => {
-      if (!isMounted) return;
-      // @ts-ignore
-      const query = Bmob.Query("PhotoEntry");
-      query.equalTo("secretCode", "==", secretCode);
-      query.order("-uploadDate");
-      query.find().then((res: any) => {
-        if (isMounted && Array.isArray(res)) setPhotos(res as PhotoEntry[]);
-      }).catch(() => {});
-    };
-
-    fetchPhotosData();
-    const photoTimer = setInterval(fetchPhotosData, 5000);
-    
-    const fetchDiariesData = () => {
-      if (!isMounted) return;
-      // @ts-ignore
-      const query = Bmob.Query("Diary");
-      query.equalTo("secretCode", "==", secretCode);
-      query.order("-createdAt");
-      query.find().then((res: any) => {
-        if (isMounted && Array.isArray(res)) {
-          console.log("获取到日记数据:", res);
-          res.forEach((entry: any) => {
-            console.log("日记条目:", {
-              text: entry.text,
-              author: entry.author,
-              createdAt: entry.createdAt,
-              createdAtType: typeof entry.createdAt
-            });
-          });
-          setEntries(res as DiaryEntry[]);
-        }
-      }).catch((err: any) => {
-        if (err.code !== 20004) {
-           console.error("日记获取失败:", err);
-        }
-      });
-    };
-
-    fetchDiariesData();
-    const diaryTimer = setInterval(fetchDiariesData, 5000);
-
-    return () => {
-      isMounted = false;
-      clearInterval(photoTimer);
-      clearInterval(diaryTimer);
-    };
-  }, [secretCode, refresh]);
+  const moodEmojis = {
+    happy: { emoji: '😄', label: '开心', color: 'bg-yellow-100 border-yellow-300' },
+    good: { emoji: '😊', label: '不错', color: 'bg-green-100 border-green-300' },
+    normal: { emoji: '😐', label: '一般', color: 'bg-blue-100 border-blue-300' },
+    sad: { emoji: '😔', label: '难过', color: 'bg-purple-100 border-purple-300' },
+    angry: { emoji: '😠', label: '生气', color: 'bg-red-100 border-red-300' }
+  };
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -528,8 +302,8 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
           let width = img.width;
           let height = img.height;
           
-          // 计算压缩尺寸（最大边长限制为 800px）
-          const maxSize = 800;
+          // 更激进的分辨率限制
+          const maxSize = 600;
           if (width > maxSize || height > maxSize) {
             const scale = Math.min(maxSize / width, maxSize / height);
             width = width * scale;
@@ -544,17 +318,558 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
             ctx.drawImage(img, 0, 0, width, height);
           }
           
-          // 使用较低的质量进行压缩（0.6 = 60% 质量）
-          let quality = 0.7;
+          // 更激进的质量压缩策略
+          let quality = 0.5; // 初始质量降至50%
           let compressedData = canvas.toDataURL('image/jpeg', quality);
           
-          // 如果压缩后的数据还是太大，继续降低质量
-          while (compressedData.length > 50000 && quality > 0.2) {
-            quality -= 0.1;
+          // 目标大小为35KB (Bmob限制约43KB，留出余量)
+          const targetSize = 40000;
+          while (compressedData.length > targetSize && quality > 0.1) {
+            quality -= 0.05;
             compressedData = canvas.toDataURL('image/jpeg', quality);
           }
           
-          resolve(compressedData.split(',')[1] || '');
+          const base64 = compressedData.split(',')[1] || '';
+          const estimatedSize = Math.ceil(base64.length * 0.75);
+          
+          // 如果还是太大就再降分辨率
+          if (estimatedSize > targetSize) {
+            reject(new Error(`图片过大(${(estimatedSize / 1024).toFixed(1)}KB)，请选择更小的图片或低分辨率照片`));
+            return;
+          }
+          
+          resolve(base64);
+        };
+        img.onerror = () => reject(new Error('图片加载失败'));
+        img.src = e.target?.result as string;
+      };
+      
+      reader.onerror = () => reject(new Error('文件读取失败'));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const fetchMoods = useCallback(() => {
+    const cacheKey = `moods_${secretCode}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) {
+      setMoods(cached);
+      return;
+    }
+    
+    // @ts-ignore
+    const query = Bmob.Query("MoodEntry");
+    query.equalTo("secretCode", "==", secretCode);
+    query.order("-createdAt");
+    query.find().then((res: any) => {
+      if (Array.isArray(res)) {
+        setMoods(res as MoodEntry[]);
+        setInCache(cacheKey, res);
+      }
+    }).catch(() => {});
+  }, [secretCode]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadMoods = () => {
+      if (isMounted) {
+        fetchMoods();
+      }
+    };
+    
+    const fetchGalleryPhotos = () => {
+      if (!isMounted) return;
+      const cacheKey = `photos_${secretCode}`;
+      const cached = getFromCache(cacheKey);
+      if (cached) {
+        setGalleryPhotos(cached);
+        return;
+      }
+      
+      // @ts-ignore
+      const query = Bmob.Query("PhotoEntry");
+      query.equalTo("secretCode", "==", secretCode);
+      query.order("-uploadDate");
+      query.find().then((res: any) => {
+        if (isMounted && Array.isArray(res)) {
+          setGalleryPhotos(res as PhotoEntry[]);
+          setInCache(cacheKey, res);
+        }
+      }).catch(() => {});
+    };
+    
+    loadMoods();
+    fetchGalleryPhotos();
+    const timer = setInterval(loadMoods, 60000);
+    const photoTimer = setInterval(fetchGalleryPhotos, 60000);
+    
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+      clearInterval(photoTimer);
+      timeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+      timeoutsRef.current = [];
+    };
+  }, [secretCode, fetchMoods]);
+
+  const handleRecordMood = async () => {
+    setLoading(true);
+    const moodValues = { happy: "5", good: "4", normal: "3", sad: "2", angry: "1" };
+    const recordDate = new Date().toISOString().split('T')[0];
+    const recordTime = new Date().toLocaleTimeString('zh-CN');
+
+    try {
+      let photoBase64 = '';
+      if (photoFile) {
+        try {
+          photoBase64 = await compressImage(photoFile);
+        } catch (compressError) {
+          alert("图片处理失败: " + String(compressError));
+          setLoading(false);
+          return;
+        }
+      }
+
+      // @ts-ignore
+      const query = Bmob.Query("MoodEntry");
+      const data: any = {
+        mood: selectedMood,
+        moodValue: moodValues[selectedMood],
+        note: note,
+        author: identity,
+        recordDate: recordDate,
+        recordTime: recordTime,
+        secretCode: secretCode
+      };
+
+      if (photoBase64) {
+        data.photoBase64 = photoBase64;
+      }
+
+      query.save(data).then(() => {
+        // 如果有图片，同时上传到相册
+        if (photoBase64) {
+          try {
+            // @ts-ignore
+            const photoQuery = Bmob.Query("PhotoEntry");
+            photoQuery.save({
+              photoBase64: photoBase64,
+              caption: note || `${moodEmojis[selectedMood].label}时刻`,
+              author: identity,
+              uploadDate: recordDate,
+              secretCode: secretCode
+            }).catch((err: any) => {
+              console.error("照片保存到相册失败:", err);
+            });
+          } catch (photoErr) {
+            console.error("照片保存到相册失败:", photoErr);
+          }
+        }
+        
+        setNote('');
+        setPhotoFile(null);
+        setPhotoPreview(null);
+        setLoading(false);
+        
+        const newMoodEntry: MoodEntry = {
+          objectId: Date.now().toString(),
+          mood: selectedMood,
+          moodValue: moodValues[selectedMood],
+          note: note,
+          author: identity as 'boy' | 'girl',
+          recordDate: recordDate,
+          createdAt: recordDate + ' ' + recordTime,
+          secretCode: secretCode
+        };
+        
+        setMoods(prev => [newMoodEntry, ...prev]);
+        const timeout = setTimeout(() => {
+          fetchMoods();
+        }, 500);
+        timeoutsRef.current.push(timeout);
+      }).catch((err: any) => {
+        console.error(err);
+        alert("记录失败: " + JSON.stringify(err));
+        if(err.code === 20004) {
+          alert("请去Bmob后台创建 MoodEntry 表!");
+        }
+        if(err.code === 10007) {
+          alert("数据太大，已为您自动压缩。如果仍然失败，请选择分辨率更低的图片");
+        }
+        setLoading(false);
+      });
+    } catch (error) {
+      console.error("图片处理失败:", error);
+      alert("图片处理失败: " + String(error));
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteMood = (id: string) => {
+    if (!window.confirm('确定要删除此心情记录吗?')) return;
+    // @ts-ignore
+    const query = Bmob.Query("MoodEntry");
+    query.get(id).then((res: any) => {
+      res.destroy().then(() => {
+        setMoods(prev => prev.filter(m => m.objectId !== id));
+        fetchMoods();
+      }).catch((err: any) => {
+        alert("删除失败: " + JSON.stringify(err));
+      });
+    }).catch((err: any) => {
+      alert("获取心情记录失败: " + JSON.stringify(err));
+    });
+  };
+
+  return (
+    <div className="h-full flex flex-col p-3 space-y-2">
+      {/* 纪念日卡片 */}
+      <div className="bg-gradient-to-r from-pink-400 via-pink-500 to-red-400 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden flex-shrink-0">
+        <div className="absolute -right-8 -bottom-8 w-32 h-32 bg-white opacity-10 rounded-full"></div>
+        <div className="absolute -left-8 top-4 w-24 h-24 bg-white opacity-10 rounded-full"></div>
+        <div className="relative z-10 text-center">
+          <p className="text-pink-100 text-xs mb-1 font-medium">💕 我们已经相爱了</p>
+          <h2 className="text-5xl font-black mb-2">{diffDays}</h2>
+          <p className="text-pink-100 text-xs">天 • Since 2025.07.04</p>
+        </div>
+      </div>
+
+      {/* 心情记录卡片 */}
+      <div className="bg-white rounded-2xl p-3 shadow-sm border border-gray-100 flex-1 flex flex-col overflow-hidden">
+        <h3 className="text-sm font-bold text-gray-800 mb-2">💭 记录当下</h3>
+
+        {/* 心情选择 - 五个按钮 */}
+        <div className="grid grid-cols-5 gap-1 mb-2">
+          {(Object.keys(moodEmojis) as Array<keyof typeof moodEmojis>).map(mood => (
+            <button
+              key={mood}
+              onClick={() => setSelectedMood(mood)}
+              className={`flex flex-col items-center justify-center py-1.5 px-1 rounded-lg border-2 transition-all active:scale-95 ${
+                selectedMood === mood 
+                  ? `${moodEmojis[mood].color} border-current scale-105` 
+                  : 'bg-gray-50 border-gray-200'
+              }`}
+            >
+              <span className="text-lg">{moodEmojis[mood].emoji}</span>
+              <span className="text-[7px] mt-0.5 text-gray-600">{moodEmojis[mood].label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* 备注输入框 */}
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="说点什么..."
+          className="w-full p-2 border border-gray-200 rounded-lg text-xs mb-2 focus:outline-none focus:ring-2 focus:ring-pink-300 resize-none h-20"
+        />
+
+        {/* 图片预览 */}
+        {photoPreview && (
+          <div className="mb-2 relative flex-shrink-0">
+            <img src={photoPreview} alt="预览" className="w-full h-20 object-cover rounded-lg border border-gray-200" />
+            <button
+              onClick={() => {
+                setPhotoFile(null);
+                setPhotoPreview(null);
+              }}
+              className="absolute top-1 right-1 bg-red-500 text-white p-0.5 rounded-full text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* 上传照片按钮 */}
+        <label className="mb-2 w-full py-2 bg-gray-100 text-gray-700 rounded-lg font-semibold hover:bg-gray-200 transition-colors flex items-center justify-center gap-1 text-xs cursor-pointer border border-gray-200">
+          📸 为当下添加照片
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handlePhotoSelect}
+            className="hidden"
+          />
+        </label>
+
+        {/* 记录按钮 */}
+        <button
+          onClick={handleRecordMood}
+          disabled={loading || isUploadingPhoto}
+          className="w-full py-2 bg-pink-500 text-white rounded-lg font-semibold active:bg-pink-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-1 text-sm mb-2"
+        >
+          {(loading || isUploadingPhoto) && <Loader2 className="animate-spin" size={14} />}
+          记录当下
+        </button>
+
+        {/* 查看最近时刻按钮 */}
+        <button
+          onClick={() => setShowMoodsModal(true)}
+          className="w-full py-2 bg-gradient-to-r from-pink-100 to-purple-100 text-gray-700 rounded-lg font-semibold hover:from-pink-200 hover:to-purple-200 transition-colors flex items-center justify-center gap-2 text-xs"
+        >
+          <Smile size={14} />
+          查看最近时刻 ({moods.length})
+        </button>
+
+        {/* 照片墙 */}
+        {galleryPhotos.length > 0 && (
+          <div className="mt-2 flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 bg-gray-900 rounded-xl overflow-hidden relative flex items-center justify-center">
+              <img
+                src={`data:image/jpeg;base64,${galleryPhotos[currentPhotoIndex]?.photoBase64}`}
+                alt="照片墙"
+                className="w-full h-full object-cover"
+              />
+              {/* 切换按钮 */}
+              {galleryPhotos.length > 1 && (
+                <>
+                  <button
+                    onClick={() => setCurrentPhotoIndex((prev) => (prev - 1 + galleryPhotos.length) % galleryPhotos.length)}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white text-gray-800 rounded-full p-1.5 transition-all active:scale-95"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    onClick={() => setCurrentPhotoIndex((prev) => (prev + 1) % galleryPhotos.length)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white text-gray-800 rounded-full p-1.5 transition-all active:scale-95"
+                  >
+                    ›
+                  </button>
+                  <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs text-white bg-black/50 px-2 py-1 rounded-full">
+                    {currentPhotoIndex + 1} / {galleryPhotos.length}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 最近时刻弹窗 */}
+      {showMoodsModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
+          <div className="w-full bg-white rounded-t-3xl shadow-2xl max-h-[80vh] flex flex-col animate-in slide-in-from-bottom">
+            {/* 弹窗头部 */}
+            <div className="flex items-center justify-between p-3 border-b border-gray-100">
+              <h2 className="text-base font-bold text-gray-800">最近时刻</h2>
+              <button
+                onClick={() => setShowMoodsModal(false)}
+                className="text-gray-400 hover:text-gray-600 p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* 弹窗内容 */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {moods.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <Smile size={32} className="mx-auto mb-2 opacity-20" />
+                  <p className="text-sm">还没有心情记录</p>
+                </div>
+              ) : (
+                moods.map(mood => (
+                  <div key={mood.objectId} className={`p-2.5 rounded-xl border ${moodEmojis[mood.mood].color}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 flex-1 min-w-0">
+                        <span className="text-2xl flex-shrink-0">{moodEmojis[mood.mood].emoji}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-semibold text-gray-800">{mood.author === 'boy' ? '👦 他' : '👧 她'}</p>
+                            <p className="text-[10px] text-gray-500">{mood.recordDate} {mood.recordTime ? mood.recordTime : ''}</p>
+                          </div>
+                          {mood.note && <p className="text-xs text-gray-700 mt-0.5 line-clamp-2">{mood.note}</p>}
+                          {mood.photoBase64 && (
+                            <div className="mt-1.5">
+                              <img src={`data:image/jpeg;base64,${mood.photoBase64}`} alt="时刻" className="w-full h-28 object-cover rounded-lg border border-gray-200" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {mood.author === identity && (
+                        <button
+                          onClick={() => handleDeleteMood(mood.objectId)}
+                          className="p-1 text-gray-300 hover:text-red-500 active:text-red-600 transition-colors flex-shrink-0"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 日记视图
+function DiaryView({ secretCode, identity }: { secretCode: string, identity: string }) {
+  const loveQuotes = [
+    "浩瀚星河的轨迹，终将徐徐驶向你的晴空。",
+    "愿我如浩海般深沉，护徐晴一世无忧安乐。",
+    "在浩渺无边的人海里，只为徐徐遇见晴天。",
+    "刘住时光的脚步，许你往后余生晴空万里。",
+    "徐徐清风拂过心田，便是刘浩最爱的晴天。",
+    "所有的浩劫余生，都是为了遇见最美的徐晴。",
+    "往后岁月浩浩荡荡，我的爱只给徐晴一人。",
+    "徐徐流淌的时光中，刘浩只想守着晴天到白头。",
+    "你是浩大世界里，我唯一想徐徐图之的晴朗。",
+    "哪怕世界浩瀚无边，刘浩的眼中也只有徐晴。",
+    "用一生的浩气长存，换你岁岁年年雨过徐晴。",
+    "想和你徐徐老去，在浩瀚宇宙里共度每一个晴雨。",
+    "刘在心底的名字，是浩宇间最温柔的那抹晴空。",
+    "从浩渊直至天际，徐晴是刘浩永恒不变的航向。",
+    "爱意如浩海奔流，只为徐徐汇入你的眼眸。",
+    "此生刘浩的心跳，只随徐晴的笑容而起伏。",
+    "无论前路多么浩渺，有徐晴的地方就是归途。",
+    "许你一场浩大的婚礼，在这个徐徐展开的晴天。",
+    "你的名字叫徐晴，是我浩大生命里唯一的光。",
+    "所有的怦然心动，都是刘浩对徐晴的蓄谋已久。",
+    "浩渺天地之间，唯愿与徐晴共看云卷云舒。",
+    "把爱写进浩瀚诗篇，每一句结尾都是徐晴。",
+    "若爱意浩瀚如海，徐晴便是海面不落的晴阳。",
+    "愿与你徐徐同行，看遍这浩浩红尘的晴雨风雪。",
+    "刘下一生的承诺，给那个叫徐晴的璀璨星辰。",
+    "所谓岁月静好，不过是刘浩与徐晴的朝夕相伴。",
+    "在这浩大的宇宙中，徐晴是刘浩唯一的万有引力。",
+    "不管风雨如何浩大，刘浩都会为你撑起一片晴空。",
+    "徐徐展开的余生画卷，要和刘浩一起画满晴天。",
+    "浩气长存的誓言，只为徐徐守护这份晴朗的爱。"
+  ];
+  
+  const [entries, setEntries] = useState<DiaryEntry[]>([]);
+  const [newText, setNewText] = useState('');
+  const [isWriting, setIsWriting] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [expandedDate, setExpandedDate] = useState<string | null>(null); // 用于全屏展示
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [photos, setPhotos] = useState<PhotoEntry[]>([]);
+  const [photoCaption, setPhotoCaption] = useState('');
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  // 使用 useCallback 创建稳定的数据加载函数
+  const fetchPhotosData = useCallback(() => {
+    const cacheKey = `photos_${secretCode}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) {
+      setPhotos(cached);
+      return;
+    }
+    
+    // @ts-ignore
+    const query = Bmob.Query("PhotoEntry");
+    query.equalTo("secretCode", "==", secretCode);
+    query.order("-uploadDate");
+    query.find().then((res: any) => {
+      if (Array.isArray(res)) {
+        setPhotos(res as PhotoEntry[]);
+        setInCache(cacheKey, res);
+      }
+    }).catch(() => {});
+  }, [secretCode]);
+
+  const fetchDiariesData = useCallback(() => {
+    const cacheKey = `diaries_${secretCode}`;
+    const cached = getFromCache(cacheKey);
+    if (cached) {
+      setEntries(cached);
+      return;
+    }
+    
+    // @ts-ignore
+    const query = Bmob.Query("Diary");
+    query.equalTo("secretCode", "==", secretCode);
+    query.order("-createdAt");
+    query.find().then((res: any) => {
+      if (Array.isArray(res)) {
+        setEntries(res as DiaryEntry[]);
+        setInCache(cacheKey, res);
+      }
+    }).catch((err: any) => {
+      if (err.code !== 20004) {
+         console.error("日记获取失败:", err);
+      }
+    });
+  }, [secretCode]);
+
+  useEffect(() => {
+    fetchPhotosData();
+    fetchDiariesData();
+    
+    const photoTimer = setInterval(fetchPhotosData, 30000);
+    const diaryTimer = setInterval(fetchDiariesData, 30000);
+
+    return () => {
+      clearInterval(photoTimer);
+      clearInterval(diaryTimer);
+    };
+  }, [fetchPhotosData, fetchDiariesData]);
+
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setPhotoPreview(event.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          
+          // 更激进的分辨率限制
+          const maxSize = 600;
+          if (width > maxSize || height > maxSize) {
+            const scale = Math.min(maxSize / width, maxSize / height);
+            width = width * scale;
+            height = height * scale;
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+          }
+          
+          // 更激进的质量压缩策略
+          let quality = 0.5; // 初始质量降至50%
+          let compressedData = canvas.toDataURL('image/jpeg', quality);
+          
+          // 目标大小为35KB (Bmob限制约43KB，留出余量)
+          const targetSize = 35000;
+          while (compressedData.length > targetSize && quality > 0.1) {
+            quality -= 0.05;
+            compressedData = canvas.toDataURL('image/jpeg', quality);
+          }
+          
+          const base64 = compressedData.split(',')[1] || '';
+          const estimatedSize = Math.ceil(base64.length * 0.75);
+          
+          // 如果还是太大就提示
+          if (estimatedSize > targetSize) {
+            reject(new Error(`图片过大(${(estimatedSize / 1024).toFixed(1)}KB)，请选择更小的图片或低分辨率照片`));
+            return;
+          }
+          
+          resolve(base64);
         };
         img.onerror = () => reject(new Error('图片加载失败'));
         img.src = e.target?.result as string;
@@ -576,16 +891,6 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
     try {
       const base64 = await compressImage(photoFile);
       
-      // 检查压缩后的大小
-      const estimatedSize = Math.ceil(base64.length * 0.75); // Base64 转换后的实际大小
-      console.log(`压缩后图片大小: ${(estimatedSize / 1024).toFixed(2)} KB`);
-      
-      if (estimatedSize > 50000) {
-        alert("图片仍然太大，请选择更小的图片或使用低分辨率图片");
-        setIsUploadingPhoto(false);
-        return;
-      }
-      
       // @ts-ignore
       const query = Bmob.Query("PhotoEntry");
       query.set("photoBase64", base64);
@@ -600,7 +905,7 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
         setPhotoCaption('');
         setIsUploadingPhoto(false);
         alert("照片上传成功！");
-        setRefresh(prev => prev + 1);
+        fetchPhotosData();
       }).catch((err: any) => {
         console.error(err);
         alert("上传失败: " + JSON.stringify(err));
@@ -624,7 +929,7 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
     // @ts-ignore
     const query = Bmob.Query("PhotoEntry");
     query.destroy(id).then(() => {
-      setRefresh(prev => prev + 1);
+      fetchPhotosData();
     }).catch((err: any) => {
       alert("删除失败: " + JSON.stringify(err));
     });
@@ -651,7 +956,7 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
       setSelectedDate(today);
       // 稍微延迟一下再刷新，确保数据已保存
       setTimeout(() => {
-        setRefresh(prev => prev + 1);
+        fetchDiariesData();
       }, 500);
     }).catch((err: any) => {
       console.error("发布错误:", err);
@@ -665,7 +970,7 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
     // @ts-ignore
     const query = Bmob.Query("Diary");
     query.destroy(id).then(() => {
-      setRefresh(prev => prev + 1);
+      fetchDiariesData();
     }).catch((err: any) => {
       alert("删除失败: " + JSON.stringify(err));
     });
@@ -703,9 +1008,6 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
     
     return 'empty';
   };
-
-  // 获取有日记的日期列表
-  const daysWithEntries = new Set(entries.map(entry => entry.createdAt.split(' ')[0]));
 
   // 获取日历数据
   const getDaysInMonth = (date: Date) => {
@@ -757,7 +1059,7 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
   if (expandedDate) {
     return (
       <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-        <div className="bg-white w-full sm:max-w-2xl sm:rounded-3xl rounded-t-3xl h-5/6 sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-5 sm:zoom-in-95">
+        <div className="bg-white w-full sm:max-w-2xl sm:rounded-3xl rounded-t-3xl h-5/6 sm:h-auto sm:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
           {/* 顶部关闭按钮和日期 */}
           <div className="bg-gradient-to-r from-pink-500 to-pink-400 px-6 py-4 flex justify-between items-center">
             <div>
@@ -1001,75 +1303,15 @@ function DiaryView({ secretCode, identity }: { secretCode: string, identity: str
         </div>
       </div>
 
-      {/* 日记列表 */}
-      <div className="flex-1 overflow-y-auto pb-20">
-        <div className="mb-3">
-          <p className="text-xs text-gray-500 font-semibold">
-            {selectedDate} 的日记 {selectedDayEntries.length > 0 && `(${selectedDayEntries.length})`}
+      {/* 爱情文案区域 */}
+      <div className="bg-gradient-to-r from-pink-50 to-red-50 rounded-2xl shadow-sm border border-pink-100 p-6 mb-4">
+        <div className="text-center">
+          <p className="text-sm text-pink-600 font-semibold mb-3">💝 每日情话</p>
+          <p className="text-base text-pink-900 leading-relaxed italic font-medium">
+            {loveQuotes[new Date().getDate() % 30]}
           </p>
         </div>
-
-        {selectedDayEntries.length === 0 ? (
-          <div className="text-center py-8 text-gray-400 text-sm">
-            <BookOpen size={40} className="mx-auto mb-2 opacity-20" />
-            <p>这天还没有日记</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {selectedDayEntries.map(entry => (
-              <div key={entry.objectId} className={`flex gap-3 animate-in fade-in ${entry.author === identity ? 'flex-row-reverse' : ''}`}>
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 border-2 border-white shadow-sm ${entry.author === 'boy' ? 'bg-blue-100' : 'bg-pink-100'}`}>
-                  {entry.author === 'boy' ? '👦' : '👧'}
-                </div>
-                <div className={`p-4 rounded-2xl text-sm relative shadow-sm max-w-[80%] ${entry.author === identity ? 'bg-pink-500 text-white rounded-tr-none' : 'bg-white text-gray-700 rounded-tl-none border border-gray-100'}`}>
-                  <p className="whitespace-pre-wrap leading-relaxed">{entry.text}</p>
-                  <div className={`flex items-center justify-between mt-2 ${entry.author === identity ? 'text-pink-100' : 'text-gray-400'}`}>
-                    <span className="text-[10px]">
-                      {new Date(entry.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    {entry.author === identity && (
-                      <button onClick={() => handleDelete(entry.objectId)} className="opacity-60 hover:opacity-100 transition-opacity">
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
-
-      {/* 照片列表 */}
-      {selectedDayPhotos.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-gray-100">
-          <p className="text-xs text-gray-500 font-semibold mb-3">📷 照片 ({selectedDayPhotos.length})</p>
-          <div className="grid grid-cols-3 gap-2 pb-20">
-            {selectedDayPhotos.map(photo => (
-              <div key={photo.objectId} className="relative group">
-                {photo.photoUrl ? (
-                  <img src={photo.photoUrl} alt={photo.caption} className="w-full h-24 object-cover rounded-lg" />
-                ) : photo.photoBase64 ? (
-                  <img src={`data:image/jpeg;base64,${photo.photoBase64}`} alt={photo.caption} className="w-full h-24 object-cover rounded-lg" />
-                ) : null}
-                {photo.author === identity && (
-                  <button
-                    onClick={() => handleDeletePhoto(photo.objectId)}
-                    className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-red-500 text-white rounded"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                )}
-                {photo.caption && (
-                  <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] px-1 py-0.5 truncate rounded-b-lg">
-                    {photo.caption}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1858,207 +2100,8 @@ function AccountingView({ secretCode, identity }: { secretCode: string, identity
   );
 }
 
-// 心情追踪视图
-function MoodView({ secretCode, identity }: { secretCode: string, identity: string }) {
-  const [moods, setMoods] = useState<MoodEntry[]>([]);
-  const [selectedMood, setSelectedMood] = useState<'happy' | 'good' | 'normal' | 'sad' | 'angry'>('good');
-  const [note, setNote] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const moodEmojis = {
-    happy: { emoji: '😄', label: '开心', color: 'bg-yellow-100 border-yellow-300' },
-    good: { emoji: '😊', label: '不错', color: 'bg-green-100 border-green-300' },
-    normal: { emoji: '😐', label: '一般', color: 'bg-blue-100 border-blue-300' },
-    sad: { emoji: '😔', label: '难过', color: 'bg-purple-100 border-purple-300' },
-    angry: { emoji: '😠', label: '生气', color: 'bg-red-100 border-red-300' }
-  };
-
-  const fetchMoods = useCallback(() => {
-    // @ts-ignore
-    const query = Bmob.Query("MoodEntry");
-    query.equalTo("secretCode", "==", secretCode);
-    query.order("-createdAt");
-    query.find().then((res: any) => {
-      if (Array.isArray(res)) setMoods(res as MoodEntry[]);
-    }).catch(() => {});
-  }, [secretCode]);
-
-  useEffect(() => {
-    let isMounted = true;
-    const loadMoods = () => {
-      if (isMounted) {
-        fetchMoods();
-      }
-    };
-    loadMoods();
-    const timer = setInterval(loadMoods, 5000);
-    return () => {
-      isMounted = false;
-      clearInterval(timer);
-    };
-  }, [secretCode, fetchMoods]);
-
-  const handleRecordMood = () => {
-    setLoading(true);
-    const moodValues = { happy: "5", good: "4", normal: "3", sad: "2", angry: "1" };
-
-    // @ts-ignore
-    const query = Bmob.Query("MoodEntry");
-    query.set("mood", selectedMood);
-    query.set("moodValue", moodValues[selectedMood]);
-    query.set("note", note);
-    query.set("author", identity);
-    query.set("recordDate", new Date().toISOString().split('T')[0]);
-    query.set("secretCode", secretCode);
-
-    query.save().then(() => {
-      setNote('');
-      setLoading(false);
-      fetchMoods();
-    }).catch((err: any) => {
-      console.error(err);
-      alert("记录失败: " + JSON.stringify(err));
-      if(err.code === 20004) {
-        alert("请去Bmob后台创建 MoodEntry 表！");
-      }
-      setLoading(false);
-    });
-  };
-
-  const handleDeleteMood = (id: string) => {
-    if (!window.confirm('确定要删除此心情记录吗?')) return;
-    // @ts-ignore
-    const query = Bmob.Query("MoodEntry");
-    query.destroy(id).then(() => {
-      fetchMoods();
-    }).catch((err: any) => {
-      alert("删除失败: " + JSON.stringify(err));
-    });
-  };
-
-  // 获取最近7天的心情数据用于图表
-  const getMoodChartData = () => {
-    const data = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
-      const dayMoods = moods.filter(m => m.recordDate === dateStr);
-      const avgMood = dayMoods.length > 0 
-        ? Math.round(dayMoods.reduce((sum, m) => sum + parseInt(String(m.moodValue)), 0) / dayMoods.length)
-        : 0;
-      data.push({
-        date: dateStr.slice(5),
-        mood: avgMood,
-        count: dayMoods.length
-      });
-    }
-    return data;
-  };
-
-  const today = new Date().toISOString().split('T')[0];
-  const todayMoods = moods.filter(m => m.recordDate === today);
-
-  return (
-    <div className="p-4 h-full flex flex-col">
-      <h2 className="text-lg font-bold text-gray-800 mb-4">心情记录</h2>
-
-      {/* 心情选择 */}
-      <div className="bg-white rounded-xl p-4 mb-4 border border-gray-200">
-        <p className="text-sm font-semibold text-gray-700 mb-3">今天的心情怎样？</p>
-        <div className="grid grid-cols-5 gap-2 mb-4">
-          {(Object.keys(moodEmojis) as Array<keyof typeof moodEmojis>).map(mood => (
-            <button
-              key={mood}
-              onClick={() => setSelectedMood(mood)}
-              className={`flex flex-col items-center justify-center p-3 rounded-lg border-2 transition-all ${
-                selectedMood === mood 
-                  ? `${moodEmojis[mood].color} border-current scale-110` 
-                  : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
-              }`}
-            >
-              <span className="text-2xl">{moodEmojis[mood].emoji}</span>
-              <span className="text-xs mt-1 text-gray-700">{moodEmojis[mood].label}</span>
-            </button>
-          ))}
-        </div>
-
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="可以记下一些想说的话..."
-          className="w-full p-2 border border-gray-200 rounded-lg text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-pink-300 resize-none h-16"
-        />
-
-        <button
-          onClick={handleRecordMood}
-          disabled={loading}
-          className="w-full py-2 bg-pink-500 text-white rounded-lg font-medium hover:bg-pink-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-        >
-          {loading && <Loader2 className="animate-spin" size={16} />}
-          记录心情
-        </button>
-      </div>
-
-      {/* 心情趋势图 */}
-      <h3 className="text-sm font-bold text-gray-800 mb-3">最近7天心情变化</h3>
-      <div className="bg-white rounded-xl p-3 mb-4">
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={getMoodChartData()}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
-            <YAxis domain={[0, 5]} />
-            <Tooltip formatter={(value: any) => {
-              const moods = ['', '生气', '难过', '一般', '不错', '开心'];
-              return moods[value] || value;
-            }} />
-            <Line type="monotone" dataKey="mood" stroke="#ec4899" strokeWidth={2} dot={{ r: 4 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* 心情记录列表 */}
-      <h3 className="text-sm font-bold text-gray-800 mb-3">心情记录</h3>
-      <div className="flex-1 overflow-y-auto space-y-2">
-        {moods.length === 0 ? (
-          <div className="text-center py-8 text-gray-400 text-sm">
-            <Smile size={40} className="mx-auto mb-2 opacity-20" />
-            <p>还没有心情记录</p>
-          </div>
-        ) : (
-          moods.map(mood => (
-            <div key={mood.objectId} className={`p-3 rounded-lg border-2 ${moodEmojis[mood.mood].color} group`}>
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-2xl">{moodEmojis[mood.mood].emoji}</span>
-                    <div>
-                      <p className="font-semibold text-gray-800">{mood.author === 'boy' ? '👦 他' : '👧 她'}</p>
-                      <p className="text-xs text-gray-500">{mood.recordDate}</p>
-                    </div>
-                  </div>
-                  {mood.note && <p className="text-sm text-gray-700 mt-2">{mood.note}</p>}
-                </div>
-                {mood.author === identity && (
-                  <button
-                    onClick={() => handleDeleteMood(mood.objectId)}
-                    className="opacity-0 group-hover:opacity-40 hover:!opacity-100 transition-opacity p-1"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
 function GalleryView({ secretCode, identity }: { secretCode: string, identity: string }) {
   const [photos, setPhotos] = useState<PhotoEntry[]>([]);
-  const [loading, setLoading] = useState(false);
 
   const fetchPhotos = useCallback(() => {
     // @ts-ignore
