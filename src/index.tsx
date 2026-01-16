@@ -252,8 +252,10 @@ function Onboarding({ onLogin }: { onLogin: (code: string, id: 'boy' | 'girl') =
 
 function HomeView({ secretCode, identity }: { secretCode: string, identity: string }) {
   const timeoutsRef = React.useRef<NodeJS.Timeout[]>([]);
-  const startDate = new Date('2025-07-04'); 
-  const diffDays = useMemo(() => Math.ceil(Math.abs(new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)), [startDate]);
+  const diffDays = useMemo(() => {
+    const startDate = new Date('2025-07-04');
+    return Math.ceil(Math.abs(new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+  }, []);
   
   const [moods, setMoods] = useState<MoodEntry[]>([]);
   const [selectedMood, setSelectedMood] = useState<'happy' | 'good' | 'normal' | 'sad' | 'angry'>('good');
@@ -263,7 +265,6 @@ function HomeView({ secretCode, identity }: { secretCode: string, identity: stri
   // 图片上传相关状态
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   
   // 弹窗状态
   const [showMoodsModal, setShowMoodsModal] = useState(false);
@@ -594,10 +595,10 @@ function HomeView({ secretCode, identity }: { secretCode: string, identity: stri
         {/* 记录按钮 */}
         <button
           onClick={handleRecordMood}
-          disabled={loading || isUploadingPhoto}
+          disabled={loading}
           className="w-full py-2 bg-pink-500 text-white rounded-lg font-semibold active:bg-pink-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-1 text-sm mb-2"
         >
-          {(loading || isUploadingPhoto) && <Loader2 className="animate-spin" size={14} />}
+          {loading && <Loader2 className="animate-spin" size={14} />}
           记录当下
         </button>
 
