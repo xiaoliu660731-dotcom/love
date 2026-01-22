@@ -1853,6 +1853,7 @@ function PlanView({ secretCode, identity, boyName, girlName }: { secretCode: str
       const dateStr = date.toISOString().split('T')[0];
       const dayTasks = tasks.filter(t => t.targetDate === dateStr);
       const completed = dayTasks.filter(t => t.completed === "true" || t.completed === true).length;
+      const total = dayTasks.length;
       
       // 按作者分类
       const boyTasks = dayTasks.filter(t => t.author === 'boy');
