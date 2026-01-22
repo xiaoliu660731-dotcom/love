@@ -4,10 +4,9 @@ import ReactDOM from 'react-dom/client';
 import Bmob from "hydrogen-js-sdk";
 import { 
   Heart, BookOpen, Smile,
-  CheckCircle, Plus, Trash2, 
-  Settings, Lock, Loader2, DollarSign, CheckSquare
+  Plus, Trash2, 
+  Settings, Loader2, DollarSign, CheckSquare
 } from 'lucide-react';
-import { PieChart, Pie, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import './index.css';
 
 // =================================================================
@@ -481,7 +480,6 @@ function HomeView({ secretCode, identity, boyName, girlName, boyAvatar, girlAvat
   
   // 照片墙状态
   const [galleryPhotos, setGalleryPhotos] = useState<PhotoEntry[]>([]);
-  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
 
   const moodEmojis = {
     happy: { emoji: '😄', label: '开心', color: 'bg-yellow-100 border-yellow-300' },
@@ -1706,7 +1704,6 @@ function PlanView({ secretCode, identity, boyName, girlName }: { secretCode: str
 
   useEffect(() => {
     let isMounted = true;
-    let lastLoadTime = 0;
     
     const loadTasks = () => {
       if (!isMounted) return;
@@ -1728,7 +1725,6 @@ function PlanView({ secretCode, identity, boyName, girlName }: { secretCode: str
             });
           });
           setTasks(res as PlanTask[]);
-          lastLoadTime = Date.now();
         }
       }).catch((err: any) => {
         if (err.code !== 20004) {
@@ -1856,7 +1852,6 @@ function PlanView({ secretCode, identity, boyName, girlName }: { secretCode: str
       const dateStr = date.toISOString().split('T')[0];
       const dayTasks = tasks.filter(t => t.targetDate === dateStr);
       const completed = dayTasks.filter(t => t.completed === "true" || t.completed === true).length;
-      const total = dayTasks.length;
       
       // 按作者分类
       const boyTasks = dayTasks.filter(t => t.author === 'boy');
@@ -2660,7 +2655,6 @@ function CalendarStats({ entries, selectedDate, setSelectedDate, boyName, girlNa
 
             const dateStr = getDateString(day);
             const stat = dateStats[dateStr];
-            const total = stat ? stat.boy + stat.girl : 0;
             const isSelected = selectedDate === dateStr;
             const hasData = !!stat;
 
