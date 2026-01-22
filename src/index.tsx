@@ -480,6 +480,7 @@ function HomeView({ secretCode, identity, boyName, girlName, boyAvatar, girlAvat
   
   // 照片墙状态
   const [galleryPhotos, setGalleryPhotos] = useState<PhotoEntry[]>([]);
+  const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
 
   const moodEmojis = {
     happy: { emoji: '😄', label: '开心', color: 'bg-yellow-100 border-yellow-300' },
